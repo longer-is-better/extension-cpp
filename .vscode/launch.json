@@ -1,0 +1,36 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "name": "C++ Debug (GDB): Python Run test_extension.py",
+        "type": "cppdbg",
+        "request": "launch",
+        "program": "/usr/bin/python",  // 你的 Python 解释器路径
+        "args": ["${workspaceFolder}/test/test_extension.py"],
+        "stopAtEntry": false,
+        "cwd": "${workspaceFolder}",
+        // "preLaunchTask": "Install Package in Editable Mode",
+        "environment": [
+          {
+            "name": "PYTHONPATH",
+            "value": "${workspaceFolder}"
+          }
+        ],
+        "externalConsole": false,
+        "MIMode": "gdb",
+        "setupCommands": [
+          {
+            "description": "Enable pretty-printing for gdb",
+            "text": "-enable-pretty-printing",
+            "ignoreFailures": true
+          }
+        ],
+        "miDebuggerPath": "/usr/bin/gdb",  // 可选：指定 gdb 路径
+        "logging": {
+          "trace": true,
+          "traceResponse": true,
+          "engineLogging": true
+        }
+      }
+    ]
+  }

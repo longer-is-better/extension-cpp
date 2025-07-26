@@ -1,0 +1,35 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+      {
+        "label": "Install Package in Editable Mode",
+        "type": "shell",
+        "command": "pip",
+        "args": [
+          "install",
+          "--no-build-isolation",
+          "-e",
+          "."
+        ],
+        "group": {
+          "kind": "build",
+          "isDefault": true
+        },
+        "problemMatcher": [
+          "$eslint-stylish"
+        ],
+        "presentation": {
+          "echo": true,
+          "reveal": "always",
+          "focus": false,
+          "panel": "shared"
+        },
+        "options": {
+          "cwd": "${workspaceFolder}",
+          "env": {
+            "DEBUG": "1"
+          }
+        }
+      }
+    ]
+  }

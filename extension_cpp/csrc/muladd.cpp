@@ -88,6 +88,7 @@ TORCH_LIBRARY(extension_cpp, m) {
   m.def("mymuladd(Tensor a, Tensor b, float c) -> Tensor");
   m.def("mymul(Tensor a, Tensor b) -> Tensor");
   m.def("myadd_out(Tensor a, Tensor b, Tensor(a!) out) -> ()");
+  m.def("flashattention(Tensor q, Tensor k, Tensor v) -> Tensor");
 }
 
 // Registers CPU implementations for mymuladd, mymul, myadd_out
