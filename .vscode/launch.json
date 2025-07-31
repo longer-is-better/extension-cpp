@@ -31,6 +31,36 @@
           "traceResponse": true,
           "engineLogging": true
         }
+      },{
+        "name": "cuda C++ Debug (GDB): Python Run test_extension.py",
+        "type": "cuda-gdb",
+        "request": "launch",
+        "program": "/usr/bin/python",  // 你的 Python 解释器路径
+        "args": ["${workspaceFolder}/test/test_extension.py"],
+        "stopAtEntry": false,
+        "cwd": "${workspaceFolder}",
+        // "preLaunchTask": "Install Package in Editable Mode",
+        "environment": [
+          {
+            "name": "PYTHONPATH",
+            "value": "${workspaceFolder}"
+          }
+        ],
+        "setupCommands": [
+          {
+            "description": "Enable pretty-printing for gdb",
+            "text": "-enable-pretty-printing",
+            "ignoreFailures": true
+          }
+        ],
+        // "miDebuggerPath": "/usr/bin/gdb",  // 可选：指定 gdb 路径
+      },{
+        "name": "Python: 调试 test_extension.py",
+        "type": "debugpy",
+        "request": "launch",
+        "program": "${workspaceFolder}/test/test_extension.py",
+        "console": "integratedTerminal",
+        "justMyCode": false
       }
     ]
   }
