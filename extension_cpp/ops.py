@@ -1,7 +1,26 @@
 import torch
 from torch import Tensor
 
-__all__ = ["mymuladd", "myadd_out"]
+__all__ = ["mymuladd", "myadd_out", "flashattention"]
+
+
+def flashattention(q: Tensor, k: Tensor, v: Tensor) -> Tensor:
+    """Performs a * b + c in an efficient fused kernel"""
+    return torch.ops.extension_cpp.flashattention.default(q, k, v)
+
+
+@torch.library.register_fake("extension_cpp::flashattention")
+def _(q, k, v):
+    torch._check(q.shape == k.shape)
+    # torch._check(a.dtype == torch.float)
+    # torch._check(b.dtype == torch.float)
+    # torch._check(a.device == b.device)
+    return torch.empty_like(q)
+
+
+
+
+
 
 
 def mymuladd(a: Tensor, b: Tensor, c: float) -> Tensor:
@@ -47,6 +66,10 @@ def _setup_context(ctx, inputs, output):
 # to save values to be used in the backward.
 torch.library.register_autograd(
     "extension_cpp::mymuladd", _backward, setup_context=_setup_context)
+
+
+
+
 
 
 @torch.library.register_fake("extension_cpp::mymul")
