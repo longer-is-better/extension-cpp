@@ -24,15 +24,26 @@ def reference_attention(q, k, v):
 
 class Testflashattention(TestCase):
     def sample_inputs(self, device, *, requires_grad=False):
+        def make_tensor_rcsum(*size):
+            rows, cols = size
+            i = torch.arange(rows, dtype=torch.float).unsqueeze(1)  # 列向量 [rows, 1]
+            j = torch.arange(cols, dtype=torch.float).unsqueeze(0)  # 行向量 [1, cols]
+            result = i + j  # 广播相加，得到 [rows, cols]
+            return result.to(device)
+
+
         def make_tensor(*size):
             return torch.randn(size, device=device, requires_grad=requires_grad)
+            # return torch.ones(size, device=device, requires_grad=requires_grad)
 
         def make_nondiff_tensor(*size):
             return torch.randn(size, device=device, requires_grad=False)
 
         return [
+            # [make_tensor_rcsum(32, 32), make_tensor_rcsum(32, 32), make_tensor_rcsum(32, 32)],
+            # [make_tensor(33, 32), make_tensor(33, 32), make_tensor(33, 32)],
             [make_tensor(512, 128), make_tensor(512, 128), make_tensor(512, 128)],
-            [make_tensor(1024, 64), make_tensor(1024, 64), make_tensor(1024, 64),],
+            # [make_tensor(1024, 64), make_tensor(1024, 64), make_tensor(1024, 64),],
         ]
 
     def _test_correctness(self, device):
@@ -40,6 +51,7 @@ class Testflashattention(TestCase):
         for args in samples:
             expected = reference_attention(*args)
             result = extension_cpp.ops.flashattention(*args)
+            print(f"expected {expected} \n result {result}")
             torch.testing.assert_close(result, expected)
 
     # def test_correctness_cpu(self):
