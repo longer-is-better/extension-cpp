@@ -8,7 +8,9 @@ from typing import Tuple
 import torch.nn.functional as F
 import torch.nn as nn
 
-
+torch.set_printoptions(threshold=float('inf'))
+torch.set_printoptions(linewidth=200)
+torch.set_printoptions(sci_mode=True)
 
 def reference_muladd(a, b, c):
     return a * b + c
@@ -31,6 +33,10 @@ class Testflashattention(TestCase):
             result = i + j  # 广播相加，得到 [rows, cols]
             return result.to(device)
 
+        def make_tensor_r0(*size):
+            t = torch.randn(size, device=device, requires_grad=requires_grad)
+            # t[:, 3:] = 0
+            return t
 
         def make_tensor(*size):
             return torch.randn(size, device=device, requires_grad=requires_grad)
@@ -40,10 +46,13 @@ class Testflashattention(TestCase):
             return torch.randn(size, device=device, requires_grad=False)
 
         return [
-            # [make_tensor_rcsum(32, 32), make_tensor_rcsum(32, 32), make_tensor_rcsum(32, 32)],
+            [make_tensor_rcsum(32, 32), make_tensor_rcsum(32, 32), make_tensor_rcsum(32, 32)],
             # [make_tensor(33, 32), make_tensor(33, 32), make_tensor(33, 32)],
+            [make_tensor(32, 64), make_tensor(32, 64), make_tensor_r0(32, 64)],
+            [make_tensor(64, 64), make_tensor(64, 64), make_tensor_r0(64, 64)],
+            [make_tensor(512, 32), make_tensor(512, 32), make_tensor(512, 32)],
             [make_tensor(512, 128), make_tensor(512, 128), make_tensor(512, 128)],
-            # [make_tensor(1024, 64), make_tensor(1024, 64), make_tensor(1024, 64),],
+            [make_tensor(1024, 64), make_tensor(1024, 64), make_tensor(1024, 64),],
         ]
 
     def _test_correctness(self, device):
@@ -51,7 +60,7 @@ class Testflashattention(TestCase):
         for args in samples:
             expected = reference_attention(*args)
             result = extension_cpp.ops.flashattention(*args)
-            print(f"expected {expected} \n result {result}")
+            # print(f"expected {expected[:10]} \n result {result[:10]}")
             torch.testing.assert_close(result, expected)
 
     # def test_correctness_cpu(self):
