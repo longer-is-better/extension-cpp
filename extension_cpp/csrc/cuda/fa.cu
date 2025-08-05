@@ -90,17 +90,17 @@ __global__ void flashattention_kernel(
             // calculate PV
             for (int i = 0; i < cal_pv_blocknum; i++) {
                 if (i * cal_pv_blocknum + threadIdx.x < head_dim) {
-                    shared_pv[threadIdx.y * head_dim + cal_pv_blocknum * i + threadIdx.x] = 0;
+                    shared_pv[threadIdx.y * head_dim + Bc * i + threadIdx.x] = 0;
                 }
             }
             for (int head = 0; head < head_dim; head++) {
                 atomicAdd(shared_pv + threadIdx.y * head_dim + head, shared_v[threadIdx.x * head_dim + head] * _p);
             }
             for (int i = 0; i < cal_pv_blocknum; i++) {
-                if (i * cal_pv_blocknum + threadIdx.x < head_dim) {
+                if (i * Bc + threadIdx.x < head_dim) {
                     o[r * Br * head_dim + threadIdx.y * head_dim + Bc * i + threadIdx.x] = (
-                        shared_l[threadIdx.y] * scale_old * shared_o[threadIdx.y * head_dim + cal_pv_blocknum * i + threadIdx.x] + \
-                        scale_new * shared_pv[threadIdx.y * head_dim + cal_pv_blocknum * i + threadIdx.x]
+                        shared_l[threadIdx.y] * scale_old * shared_o[threadIdx.y * head_dim + Bc * i + threadIdx.x] + \
+                        scale_new * shared_pv[threadIdx.y * head_dim + Bc * i + threadIdx.x]
                     ) / _l_new;
                 }
             }
