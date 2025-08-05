@@ -109,7 +109,6 @@ __global__ void flashattention_kernel(
                 l[r * Br + threadIdx.y] = _l_new;
                 m[r * Br + threadIdx.y] = _m_new;
             }
-            __syncthreads();
         }
     }
 }
