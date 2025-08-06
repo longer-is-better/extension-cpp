@@ -32,6 +32,7 @@ __device__ float warpSum(float val) {
 }
 
 // one block on one SM
+// warp reduce 32 Bc
 // 
 __global__ void flashattention_kernel(
     uint Tr, uint Tc, uint Br, uint Bc, uint head_dim, uint element_size, uint seq_len,
@@ -109,6 +110,7 @@ __global__ void flashattention_kernel(
                 l[r * Br + threadIdx.y] = _l_new;
                 m[r * Br + threadIdx.y] = _m_new;
             }
+            // __syncthreads();
         }
     }
 }
@@ -155,6 +157,118 @@ at::Tensor flashattention_cuda(
     CUDA_CHECK(cudaDeviceSynchronize());
     return result;
 }
+
+
+__global__ void flashattention2_kernel(
+    uint Tr, uint Tc, uint Br, uint Bc, uint head_dim, uint element_size, uint seq_len,
+    const float* q, const float* k, const float* v, float* o
+) {
+    extern __shared__ float smem[];
+    float* shared_q = smem;
+    float* shared_k = shared_q + Br * head_dim;
+    float* shared_v = shared_k + Bc * head_dim;
+    float* shared_o = shared_v + Bc * head_dim;
+
+    uint load_q_blocknum = (head_dim + Bc - 1) / Bc;
+    uint load_kv_blocknum = (head_dim + Br - 1) / Br;
+
+    float l, m;
+    for (int r = 0; r < Tr; r++) {
+        // load q init o l m
+        for (int i = 0; i < load_q_blocknum; i++) {
+            if (i * Bc + threadIdx.x < head_dim) {
+                shared_q[threadIdx.y * head_dim + Bc * i + threadIdx.x] = q[r * Br * head_dim + threadIdx.y * head_dim + Bc * i + threadIdx.x];
+                shared_o[threadIdx.y * head_dim + Bc * i + threadIdx.x] = 0.;
+            }
+        }
+        l = 0;
+        m = CUDART_NEG_INF_F;
+        for (int c = 0; c < Tc; c++) {
+            // load k v
+            for (int i = 0; i < load_kv_blocknum; i++) {
+                if (i * Br + threadIdx.y < head_dim) {
+                    shared_k[i * Br * Bc + threadIdx.y * Bc + threadIdx.x] = k[c * Bc * head_dim + threadIdx.x * head_dim + i * Br + threadIdx.y];
+                    shared_v[threadIdx.x * head_dim + i * Br + threadIdx.y] = v[c * Bc * head_dim + threadIdx.x * head_dim + i * Br + threadIdx.y];
+                }
+            }
+            // calculate one cell of QKt
+            float s = 0;
+            for (int i = 0; i < head_dim; i++) {
+                s = __fmaf_rn(shared_q[threadIdx.y * head_dim + i], shared_k[i * Bc + threadIdx.x], s);
+            }
+            s = s / sqrtf(head_dim);
+            // reduce max _m and broadcast https://zhuanlan.zhihu.com/p/669957986
+            float _m = warpMax(s);
+            _m = __shfl_sync(0xffffffff, _m, 0);
+            m = max(m, _m);
+            // cal p l
+            float _p = expf(s - m);
+            float _l = warpSum(_p);
+            _l = __shfl_sync(0xffffffff, _l, 0);
+        }
+
+    }
+
+}
+
+
+
+
+
+
+
+
+
+
+at::Tensor flashattention2_cuda(
+    const at::Tensor& q, const at::Tensor& k, const at::Tensor& v
+) {
+    cudaDeviceProp deviceProp;
+    cudaGetDeviceProperties(&deviceProp, 0);
+    uint M = deviceProp.sharedMemPerBlock;
+    uint element_size = q.element_size();
+    uint seq_len = q.size(0);
+    uint head_dim = q.size(1);
+    uint Bc = 32;  //warpSize
+    // uint Br = (M - 2 * Bc * head_dim * element_size) / (3 * (head_dim + 1) * element_size);
+    uint Br = 4;
+    Br = min(Br, 32);  //warpSize
+    uint Tr = (seq_len + Br - 1) / Br;
+    uint Tc = (seq_len + Bc - 1) / Bc;
+    at::Tensor q_contig = q.contiguous();
+    at::Tensor k_contig = k.contiguous();
+    at::Tensor v_contig = v.contiguous();
+    // at::Tensor l = at::zeros({seq_len}, torch::dtype(torch::kFloat32).device(torch::kCUDA));
+    // at::Tensor m = at::full(
+    //     {seq_len},
+    //     -std::numeric_limits<float>::infinity(),
+    //     torch::dtype(torch::kFloat32).device(torch::kCUDA)
+    // );
+    at::Tensor result = at::zeros({seq_len, head_dim}, torch::dtype(torch::kFloat32).device(torch::kCUDA));
+    uint smem = ((2 * Bc + 2 * Br) * head_dim) * element_size;
+    flashattention2_kernel<<<{1}, {Bc, Br}, smem, at::cuda::getCurrentCUDAStream()>>>(
+        Tr, Tc, Br, Bc, head_dim, element_size, seq_len,
+        q_contig.data_ptr<float>(),
+        k_contig.data_ptr<float>(),
+        v_contig.data_ptr<float>(),
+        result.data_ptr<float>()
+    );
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaDeviceSynchronize());
+    return result;
+}
+
+
+
+
+
+
+
+
+
+
+
+
 
 // Registers CUDA implementations for mymuladd, mymul, myadd_out
 TORCH_LIBRARY_IMPL(extension_cpp, CUDA, m) {
