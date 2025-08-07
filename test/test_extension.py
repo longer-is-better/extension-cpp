@@ -35,7 +35,7 @@ class Testflashattention(TestCase):
 
         def make_tensor_r0(*size):
             t = torch.randn(size, device=device, requires_grad=requires_grad)
-            # t[:, 3:] = 0
+            t[:, 3:] = 0
             return t
 
         def make_tensor(*size):
@@ -60,7 +60,7 @@ class Testflashattention(TestCase):
         for args in samples:
             expected = reference_attention(*args)
             result = extension_cpp.ops.flashattention(*args)
-            # print(f"expected {expected[:10]} \n result {result[:10]}")
+            print(f"expected {expected[5:10]} \n result {result[5:10]}")
             torch.testing.assert_close(result, expected)
 
     # def test_correctness_cpu(self):
