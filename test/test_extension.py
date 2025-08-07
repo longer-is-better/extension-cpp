@@ -30,37 +30,80 @@ class Testflashattention(TestCase):
             rows, cols = size
             i = torch.arange(rows, dtype=torch.float).unsqueeze(1)  # 列向量 [rows, 1]
             j = torch.arange(cols, dtype=torch.float).unsqueeze(0)  # 行向量 [1, cols]
-            result = i + j  # 广播相加，得到 [rows, cols]
+            result = i + 100*j  # 广播相加，得到 [rows, cols]
+            
+            # result[2:, :] = 0
             return result.to(device)
 
         def make_tensor_r0(*size):
             t = torch.randn(size, device=device, requires_grad=requires_grad)
-            t[:, 3:] = 0
+            t[:, 1:] = -999
+            return t
+
+        def make_tensor_d0(*size):
+            t = torch.randn(size, device=device, requires_grad=requires_grad)
+            t[0, :] = 0
+            t[2:, :] = 0
             return t
 
         def make_tensor(*size):
             return torch.randn(size, device=device, requires_grad=requires_grad)
             # return torch.ones(size, device=device, requires_grad=requires_grad)
 
+        def make_tensor1(*size):
+            return torch.ones(size, device=device, requires_grad=requires_grad)
+
         def make_nondiff_tensor(*size):
             return torch.randn(size, device=device, requires_grad=False)
 
+
+
+        def make_tensor_q(*size):
+            t = torch.randn(size, device=device, requires_grad=requires_grad)
+            t[0, :] = 0
+            t[1, :] = 100*torch.arange(32)
+            t[2:, :] = 0
+            return t
+
+        def make_tensor_k(*size):
+            rows, cols = size
+            res = torch.arange(rows, dtype=torch.float).unsqueeze(1).repeat(1, cols)
+            return res.to(device)
+            # return torch.randn(size, device=device, requires_grad=requires_grad)
+
+        def make_tensor_v(*size):
+            rows, cols = size
+            i = torch.arange(rows, dtype=torch.float).unsqueeze(1)  # 列向量 [rows, 1]
+            j = torch.arange(cols, dtype=torch.float).unsqueeze(0)  # 行向量 [1, cols]
+            result = i + 100*j  # 广播相加，得到 [rows, cols]
+            
+            # result[2:, :] = 0
+            return result.to(device)
+
+
+
         return [
-            [make_tensor_rcsum(32, 32), make_tensor_rcsum(32, 32), make_tensor_rcsum(32, 32)],
-            # [make_tensor(33, 32), make_tensor(33, 32), make_tensor(33, 32)],
-            [make_tensor(32, 64), make_tensor(32, 64), make_tensor_r0(32, 64)],
-            [make_tensor(64, 64), make_tensor(64, 64), make_tensor_r0(64, 64)],
-            [make_tensor(512, 32), make_tensor(512, 32), make_tensor(512, 32)],
-            [make_tensor(512, 128), make_tensor(512, 128), make_tensor(512, 128)],
-            [make_tensor(1024, 64), make_tensor(1024, 64), make_tensor(1024, 64),],
+            # [make_tensor_rcsum(32, 32), make_tensor_rcsum(32, 32), make_tensor_rcsum(32, 32)],
+            # [make_tensor(32, 32), make_tensor(32, 32), make_tensor(32, 32)],
+            # [make_tensor(32, 64), make_tensor(32, 64), make_tensor(32, 64)],
+            [make_tensor_q(64, 32), make_tensor_k(64, 32), make_tensor_v(64, 32)],
+            # [make_tensor_d0(64, 32), make_tensor(64, 32), make_tensor(64, 32)],
+            # [make_tensor(64, 32), make_tensor(64, 32), make_tensor1(64, 32)],
+            # [make_tensor(64, 32), make_tensor(64, 32), make_tensor(64, 32)],
+            # [make_tensor(32, 64), make_tensor(32, 64), make_tensor_r0(32, 64)],
+            # [make_tensor(64, 64), make_tensor(64, 64), make_tensor1(64, 64)],
+            # [make_tensor(512, 32), make_tensor(512, 32), make_tensor(512, 32)],
+            # [make_tensor(32, 32), make_tensor(32, 32), make_tensor(32, 32)],
+            # [make_tensor(512, 128), make_tensor(512, 128), make_tensor(512, 128)],
+            # [make_tensor(1024, 64), make_tensor(1024, 64), make_tensor(1024, 64),],
         ]
 
     def _test_correctness(self, device):
         samples = self.sample_inputs(device)
         for args in samples:
             expected = reference_attention(*args)
-            result = extension_cpp.ops.flashattention(*args)
-            print(f"expected {expected[5:10]} \n result {result[5:10]}")
+            result = extension_cpp.ops.flashattention2(*args)
+            print(f"expected {expected[:3]} \n result {result[:3]}")
             torch.testing.assert_close(result, expected)
 
     # def test_correctness_cpu(self):
