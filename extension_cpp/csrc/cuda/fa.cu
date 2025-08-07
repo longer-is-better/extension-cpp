@@ -47,13 +47,12 @@ __global__ void flashattention_kernel(
     float* shared_l = shared_o + Br * head_dim;
     float* shared_m = shared_l + Br;
 
-    uint load_kv_blocknum = (head_dim + Br - 1) / Br;
-    uint load_qo_blocknum = (head_dim + Bc - 1) / Bc;
-    uint cal_pv_blocknum = load_qo_blocknum;
+    uint kv_blocknum = (head_dim + Br - 1) / Br;
+    uint pvqo_blocknum = (head_dim + Bc - 1) / Bc;
 
     for (int c = 0; c < Tc; c++) {
         // load k v
-        for (int i = 0; i < load_kv_blocknum; i++) {
+        for (int i = 0; i < kv_blocknum; i++) {
             if (i * Br + threadIdx.y < head_dim) {
                 shared_k[i * Br * Bc + threadIdx.y * Bc + threadIdx.x] = k[c * Bc * head_dim + threadIdx.x * head_dim + i * Br + threadIdx.y];
                 shared_v[threadIdx.x * head_dim + i * Br + threadIdx.y] = v[c * Bc * head_dim + threadIdx.x * head_dim + i * Br + threadIdx.y];
@@ -61,7 +60,7 @@ __global__ void flashattention_kernel(
         }
         for (int r = 0; r < Tr; r++) {
             // load q o l m
-            for (int i = 0; i < load_qo_blocknum; i++) {
+            for (int i = 0; i < pvqo_blocknum; i++) {
                 if (i * Bc + threadIdx.x < head_dim) {
                     shared_q[threadIdx.y * head_dim + Bc * i + threadIdx.x] = q[r * Br * head_dim + threadIdx.y * head_dim + Bc * i + threadIdx.x];
                     shared_o[threadIdx.y * head_dim + Bc * i + threadIdx.x] = o[r * Br * head_dim + threadIdx.y * head_dim + Bc * i + threadIdx.x];
@@ -89,15 +88,15 @@ __global__ void flashattention_kernel(
             float scale_new = expf(_m - _m_new);
             float _l_new = scale_old * shared_l[threadIdx.y] + scale_new * _l;
             // calculate PV
-            for (int i = 0; i < cal_pv_blocknum; i++) {
-                if (i * cal_pv_blocknum + threadIdx.x < head_dim) {
+            for (int i = 0; i < pvqo_blocknum; i++) {
+                if (i * Bc + threadIdx.x < head_dim) {
                     shared_pv[threadIdx.y * head_dim + Bc * i + threadIdx.x] = 0;
                 }
             }
             for (int head = 0; head < head_dim; head++) {
                 atomicAdd(shared_pv + threadIdx.y * head_dim + head, shared_v[threadIdx.x * head_dim + head] * _p);
             }
-            for (int i = 0; i < cal_pv_blocknum; i++) {
+            for (int i = 0; i < pvqo_blocknum; i++) {
                 if (i * Bc + threadIdx.x < head_dim) {
                     o[r * Br * head_dim + threadIdx.y * head_dim + Bc * i + threadIdx.x] = (
                         shared_l[threadIdx.y] * scale_old * shared_o[threadIdx.y * head_dim + Bc * i + threadIdx.x] + \
@@ -170,45 +169,61 @@ __global__ void flashattention2_kernel(
     float* shared_o = shared_v + Bc * head_dim;
 
     uint load_q_blocknum = (head_dim + Bc - 1) / Bc;
-    uint load_kv_blocknum = (head_dim + Br - 1) / Br;
+    uint kv_blocknum = (head_dim + Br - 1) / Br;
+    uint pvqo_blocknum = kv_blocknum;
 
-    float l, m;
+    float l_old, l, m_old, m;
     for (int r = 0; r < Tr; r++) {
-        // load q init o l m
+        // load q init o l_old m_old
         for (int i = 0; i < load_q_blocknum; i++) {
             if (i * Bc + threadIdx.x < head_dim) {
                 shared_q[threadIdx.y * head_dim + Bc * i + threadIdx.x] = q[r * Br * head_dim + threadIdx.y * head_dim + Bc * i + threadIdx.x];
                 shared_o[threadIdx.y * head_dim + Bc * i + threadIdx.x] = 0.;
             }
         }
-        l = 0;
-        m = CUDART_NEG_INF_F;
+        l_old = 0;
+        m_old = -INFINITY;
         for (int c = 0; c < Tc; c++) {
             // load k v
-            for (int i = 0; i < load_kv_blocknum; i++) {
+            for (int i = 0; i < kv_blocknum; i++) {
                 if (i * Br + threadIdx.y < head_dim) {
                     shared_k[i * Br * Bc + threadIdx.y * Bc + threadIdx.x] = k[c * Bc * head_dim + threadIdx.x * head_dim + i * Br + threadIdx.y];
                     shared_v[threadIdx.x * head_dim + i * Br + threadIdx.y] = v[c * Bc * head_dim + threadIdx.x * head_dim + i * Br + threadIdx.y];
                 }
             }
-            // calculate one cell of QKt
+            // calculate one cell of s = QKt
             float s = 0;
             for (int i = 0; i < head_dim; i++) {
                 s = __fmaf_rn(shared_q[threadIdx.y * head_dim + i], shared_k[i * Bc + threadIdx.x], s);
             }
             s = s / sqrtf(head_dim);
             // reduce max _m and broadcast https://zhuanlan.zhihu.com/p/669957986
-            float _m = warpMax(s);
-            _m = __shfl_sync(0xffffffff, _m, 0);
-            m = max(m, _m);
-            // cal p l
-            float _p = expf(s - m);
-            float _l = warpSum(_p);
-            _l = __shfl_sync(0xffffffff, _l, 0);
+            m = warpMax(s);
+            m = __shfl_sync(0xffffffff, m, 0);
+            m = max(m_old, m);
+            // cal p l_old
+            float p = expf(s - m);
+            l = exp(m_old - m) * l_old + warpSum(p);
+            l = __shfl_sync(0xffffffff, l, 0);
+            // scale o and accumulation pv to o
+            for (int i = 0; i < pvqo_blocknum; i++) {
+                if (i * Bc + threadIdx.x < head_dim && m_old != -INFINITY) {
+                    shared_o[threadIdx.y * head_dim + Bc * i + threadIdx.x] /= exp(m_old - m);
+                }
+            }
+            for (int head = 0; head < head_dim; head++) {
+                atomicAdd(shared_o + threadIdx.y * head_dim + head, shared_v[threadIdx.x * head_dim + head] * p);
+            }
+            m_old = m;
+            l_old = l;
         }
-
+        for (int i = 0; i < pvqo_blocknum; i++) {
+            if (i * Bc + threadIdx.x < head_dim) {
+                o[r * Br * head_dim + threadIdx.y * head_dim + Bc * i + threadIdx.x] = \
+                shared_o[threadIdx.y * head_dim + Bc * i + threadIdx.x] / l;
+            }
+        }
     }
-
 }
 
 
@@ -238,14 +253,8 @@ at::Tensor flashattention2_cuda(
     at::Tensor q_contig = q.contiguous();
     at::Tensor k_contig = k.contiguous();
     at::Tensor v_contig = v.contiguous();
-    // at::Tensor l = at::zeros({seq_len}, torch::dtype(torch::kFloat32).device(torch::kCUDA));
-    // at::Tensor m = at::full(
-    //     {seq_len},
-    //     -std::numeric_limits<float>::infinity(),
-    //     torch::dtype(torch::kFloat32).device(torch::kCUDA)
-    // );
     at::Tensor result = at::zeros({seq_len, head_dim}, torch::dtype(torch::kFloat32).device(torch::kCUDA));
-    uint smem = ((2 * Bc + 2 * Br) * head_dim) * element_size;
+    uint smem = (2 * (Bc + Br) * head_dim) * element_size;
     flashattention2_kernel<<<{1}, {Bc, Br}, smem, at::cuda::getCurrentCUDAStream()>>>(
         Tr, Tc, Br, Bc, head_dim, element_size, seq_len,
         q_contig.data_ptr<float>(),
@@ -273,6 +282,7 @@ at::Tensor flashattention2_cuda(
 // Registers CUDA implementations for mymuladd, mymul, myadd_out
 TORCH_LIBRARY_IMPL(extension_cpp, CUDA, m) {
     m.impl("flashattention", &flashattention_cuda);
+    m.impl("flashattention2", &flashattention2_cuda);
   }
   
 }
