@@ -168,20 +168,19 @@ __global__ void flashattention2_kernel(
     float* shared_v = shared_k + Bc * head_dim;
     float* shared_o = shared_v + Bc * head_dim;
 
-    uint load_q_blocknum = (head_dim + Bc - 1) / Bc;
     uint kv_blocknum = (head_dim + Br - 1) / Br;
-    uint pvqo_blocknum = kv_blocknum;
+    uint pvqo_blocknum = (head_dim + Bc - 1) / Bc;
 
     float l_old, l, m_old, m;
     for (int r = 0; r < Tr; r++) {
         // load q init o l_old m_old
-        for (int i = 0; i < load_q_blocknum; i++) {
+        for (int i = 0; i < pvqo_blocknum; i++) {
             if (i * Bc + threadIdx.x < head_dim) {
                 shared_q[threadIdx.y * head_dim + Bc * i + threadIdx.x] = q[r * Br * head_dim + threadIdx.y * head_dim + Bc * i + threadIdx.x];
                 shared_o[threadIdx.y * head_dim + Bc * i + threadIdx.x] = 0.;
             }
         }
-        l_old = 0;
+        l = 0;
         m_old = -INFINITY;
         for (int c = 0; c < Tc; c++) {
             // load k v
@@ -203,19 +202,19 @@ __global__ void flashattention2_kernel(
             m = max(m_old, m);
             // cal p l_old
             float p = expf(s - m);
-            l = exp(m_old - m) * l_old + warpSum(p);
+            l = exp(m_old - m) * l + warpSum(p);
             l = __shfl_sync(0xffffffff, l, 0);
             // scale o and accumulation pv to o
             for (int i = 0; i < pvqo_blocknum; i++) {
                 if (i * Bc + threadIdx.x < head_dim && m_old != -INFINITY) {
-                    shared_o[threadIdx.y * head_dim + Bc * i + threadIdx.x] /= exp(m_old - m);
+                    shared_o[threadIdx.y * head_dim + Bc * i + threadIdx.x] *= exp(m_old - m);
                 }
             }
             for (int head = 0; head < head_dim; head++) {
                 atomicAdd(shared_o + threadIdx.y * head_dim + head, shared_v[threadIdx.x * head_dim + head] * p);
             }
             m_old = m;
-            l_old = l;
+            // l_old = l;
         }
         for (int i = 0; i < pvqo_blocknum; i++) {
             if (i * Bc + threadIdx.x < head_dim) {
